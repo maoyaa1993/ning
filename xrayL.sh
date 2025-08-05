@@ -35,7 +35,7 @@ EOF
 	echo "Xray 安装完成."
 }
 
-# 生成单一类型配置的函数（修复TOML格式）
+# 生成单一类型配置的函数（修复监听地址和TOML格式）
 generate_config() {
 	local config_type=$1
 	local start_port=$2
@@ -51,6 +51,8 @@ generate_config() {
 		config_content+="port = $current_port\n"
 		config_content+="protocol = \"$config_type\"\n"
 		config_content+="tag = \"$tag\"\n"
+		# 新增：监听所有网络接口（允许本地和远程连接）
+		config_content+="listen = \"0.0.0.0\"\n"
 		config_content+="[inbounds.settings]\n"
 
 		if [ "$config_type" == "socks" ]; then
@@ -58,7 +60,7 @@ generate_config() {
 			local password=${extra_args[1]}
 			config_content+="auth = \"password\"\n"
 			config_content+="udp = true\n"
-			config_content+="ip = \"${IP_ADDRESSES[i]}\"\n"
+			# 移除错误的ip字段，改为在outbound指定源IP
 			config_content+="[[inbounds.settings.accounts]]\n"
 			config_content+="user = \"$username\"\n"
 			config_content+="pass = \"$password\"\n"
@@ -70,16 +72,16 @@ generate_config() {
 			config_content+="[inbounds.streamSettings]\n"
 			config_content+="network = \"ws\"\n"
 			config_content+="[inbounds.streamSettings.wsSettings]\n"
-			config_content+="path = \"$ws_path\"\n"  # 减少多余空行，避免格式问题
+			config_content+="path = \"$ws_path\"\n"
 		fi
 
-		# 生成outbound配置
+		# 生成outbound配置（指定源IP，对应服务器的IP）
 		config_content+="[[outbounds]]\n"
-		config_content+="sendThrough = \"${IP_ADDRESSES[i]}\"\n"
+		config_content+="sendThrough = \"${IP_ADDRESSES[i]}\"\n"  # 这里才是指定源IP的正确位置
 		config_content+="protocol = \"freedom\"\n"
 		config_content+="tag = \"$tag\"\n"
 
-		# 生成路由规则（仅添加规则条目，不重复定义[routing]）
+		# 生成路由规则
 		config_content+="[[routing.rules]]\n"
 		config_content+="type = \"field\"\n"
 		config_content+="inboundTag = \"$tag\"\n"
@@ -94,10 +96,10 @@ config_xray() {
 	mkdir -p /etc/xrayL
 	local final_config=""
 
-	# 先添加TOML必需的顶层配置（修复核心问题）
+	# 添加TOML必需的顶层配置
 	final_config+="[log]\n"
-	final_config+="loglevel = \"warning\"\n\n"  # 添加日志配置，避免空配置警告
-	final_config+="[routing]\n"  # 路由顶层配置，所有rules必须在此之下
+	final_config+="loglevel = \"warning\"\n\n"
+	final_config+="[routing]\n"
 
 	if [ "$config_type" == "socks+vmess" ]; then
 		# 处理socks配置
@@ -116,11 +118,11 @@ config_xray() {
 		read -p "WebSocket 路径 (默认 $DEFAULT_WS_PATH): " WS_PATH
 		WS_PATH=${WS_PATH:-$DEFAULT_WS_PATH}
 
-		# 生成并合并配置（先socks后vmess）
+		# 生成并合并配置
 		final_config+=$(generate_config "socks" $SOCKS_START_PORT "$SOCKS_USERNAME" "$SOCKS_PASSWORD")
 		final_config+=$(generate_config "vmess" $VMESS_START_PORT "$UUID" "$WS_PATH")
 
-		# 输出socks结果
+		# 输出结果
 		echo ""
 		echo "生成 SOCKS 配置完成"
 		echo "SOCKS 起始端口: $SOCKS_START_PORT"
@@ -128,7 +130,6 @@ config_xray() {
 		echo "SOCKS 账号: $SOCKS_USERNAME"
 		echo "SOCKS 密码: $SOCKS_PASSWORD"
 
-		# 输出vmess结果
 		echo ""
 		echo "生成 VMESS 配置完成"
 		echo "VMESS 起始端口: $VMESS_START_PORT"
@@ -175,7 +176,7 @@ config_xray() {
 		exit 1
 	fi
 
-	# 写入最终配置并重启服务
+	# 写入配置并重启服务
 	echo -e "$final_config" >/etc/xrayL/config.toml
 	systemctl restart xrayL.service
 	systemctl --no-pager status xrayL.service
